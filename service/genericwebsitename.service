@@ -1,0 +1,19 @@
+[Unit]
+After=NetworkManager.service time-sync.target
+Description=genericwebsitename
+
+[Service]
+Type=forking
+User=ben
+Group=ben
+RemainAfterExit=yes
+ExecStart=/usr/bin/tmux new-session -d -s "genericwebsitename" /home/ben/GenericWebsiteName/service/run_dev_server.sh
+ExecStop=/usr/bin/tmux send-keys -t "genericwebsitename" C-c
+KillMode=none
+TimeoutStopSec=3
+KillSignal=SIGINT
+FinalKillSignal=SIGKILL
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
