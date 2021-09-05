@@ -26,7 +26,7 @@ interface SensorsState {
   linear?: DodobotLinearState,
   image?: CompressedImage,
   depth?: CompressedImage,
-  // other params: DateConstructor
+  charging?: boolean,
   colorTime: any,
   depthTime: any,
   motors_enabled: boolean,
@@ -54,6 +54,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
 
     // bind handlers
     this.batteryCallback = this.batteryCallback.bind(this);
+    this.isChargingCallback = this.isChargingCallback.bind(this);
     this.bumperCallback = this.bumperCallback.bind(this);
     this.driveCallback = this.driveCallback.bind(this);
     this.fsrsCallback = this.fsrsCallback.bind(this);
@@ -124,6 +125,12 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
       messageType: 'sensor_msgs/BatteryState'
     });
 
+    var isChargingSub = new roslib.Topic({
+      ros: this.state.ros,
+      name: '/dodobot/is_charging',
+      messageType: 'std_msgs/Bool'
+    });
+
     var bumperSub = new roslib.Topic({
       ros: this.state.ros,
       name: '/dodobot/bumper',
@@ -190,6 +197,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
 
 
     batterySub.subscribe(this.batteryCallback);
+    isChargingSub.subscribe(this.isChargingCallback);
     bumperSub.subscribe(this.bumperCallback);
     driveSub.subscribe(this.driveCallback);
     fsrsSub.subscribe(this.fsrsCallback);
@@ -206,6 +214,12 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
         voltage: message.voltage,
         current: message.current
       }
+    });
+  }
+
+  isChargingCallback(message: any) {
+    this.setState({
+      charging: message.data
     });
   }
 
@@ -383,6 +397,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     const fsrs = this.state.fsrs;
     const image = this.state.image;
     const depth = this.state.depth;
+    const is_charging = this.state.charging;
 
     return <div>
       <a href="http://192.168.0.21:8080/admin">Pi-Hole Admin Console</a>
@@ -434,6 +449,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
         <h2>Battery</h2>
         <p><b>Voltage:</b> {battery?.voltage.toFixed(2)} V</p>
         <p><b>Current:</b> {battery?.current.toFixed(2)} mA</p>
+        <p><b>Is Charging:</b> {is_charging ? "Yes" : "No"}</p>
         <hr/>
       </div> 
       <div hidden={!bumper}>
