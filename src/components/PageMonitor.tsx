@@ -3,6 +3,7 @@ import React from 'react';
 import Switch from "react-switch";
 import { TextBoxComponent } from '@syncfusion/ej2-react-inputs';
 import { CompressedImage, DodobotBatteryState, DodobotBumperState, DodobotDriveState, DodobotFSRsState, DodobotGripperState, DodobotLinearState } from './Sensors';
+import ColorPicker from 'material-ui-color-picker'
 
 var roslib = require('roslib');
 
@@ -19,6 +20,7 @@ interface SensorsState {
 
   // ros state
   battery?: DodobotBatteryState,
+  charger?: DodobotBatteryState,
   bumper?: DodobotBumperState,
   drive?: DodobotDriveState,
   fsrs?: DodobotFSRsState,
@@ -30,10 +32,17 @@ interface SensorsState {
   colorTime: any,
   depthTime: any,
   motors_enabled: boolean,
+  ring_light_on: boolean,
+  ringLightColor?: any,
 
   robotStateService?: any,
   cmdVelPub?: any,
+  linearStepperPub?: any,
   tilterCmdPub?: any,
+  dockService?: any,
+  undockService?: any,
+  ringLightPub?: any,
+
   linear_cmd: any,
   angular_cmd: any,
 }
@@ -50,6 +59,8 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
       motors_enabled: false,
       linear_cmd: DEFAULT_LINEAR_VEL,
       angular_cmd: DEFAULT_ANGULAR_VEL,
+      ring_light_on: false,
+      ringLightColor: "#000000"
     };
 
     // bind handlers
@@ -62,10 +73,18 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     this.linearCallback = this.linearCallback.bind(this);
     this.imageCallback = this.imageCallback.bind(this);
     this.depthCallback = this.depthCallback.bind(this);
+    this.chargerCallback = this.chargerCallback.bind(this);
+
     this.handleChangeMotorState = this.handleChangeMotorState.bind(this);
-    this.MotorsEnabledSection = this.MotorsEnabledSection.bind(this);
     this.handleLinearVelChange = this.handleLinearVelChange.bind(this);
     this.handleAngularVelChange = this.handleAngularVelChange.bind(this);
+    this.handleOnOffRingLight = this.handleOnOffRingLight.bind(this);
+    this.handleChangeRingLight = this.handleChangeRingLight.bind(this);
+    this.homeLinearStepper = this.homeLinearStepper.bind(this);
+    this.runDockRoutine = this.runDockRoutine.bind(this);
+    this.runUnDockRoutine = this.runUnDockRoutine.bind(this);
+
+    this.MotorsEnabledSection = this.MotorsEnabledSection.bind(this);
   }
 
   handleLinearVelChange(event: any) {
@@ -89,6 +108,62 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     }, function(error: any){
         console.error("Got an error while trying to call set state service: " + error);
     });
+  }
+
+
+  handleOnOffRingLight(ring_light_on: boolean)
+  {
+    this.setState({ ring_light_on });
+
+    if (ring_light_on && this.state.ringLightColor) {
+      var color = {data: this.colorToInt(this.state.ringLightColor)};
+    }
+    else {
+      var color = {data: 0};
+    }
+    var msg = new roslib.Message(color);
+    console.log("Setting ring light to " + JSON.stringify(color));
+    this.state.ringLightPub.publish(msg);
+  }
+
+  handleChangeRingLight(ringLightColor: any)
+  {
+    if (ringLightColor) {
+      this.setState({ringLightColor});
+    
+      let raw_color = this.colorToInt(ringLightColor);
+      if (this.state.ring_light_on) {
+        var msg = new roslib.Message({data: raw_color});
+        console.log("Setting ring light to " + JSON.stringify(msg));
+        this.state.ringLightPub.publish(msg);
+      }
+
+      console.log(raw_color);
+      console.log(this.state.ringLightColor);
+    }
+  }
+
+  colorToInt(hex_color: string) {
+    if (hex_color.length <= 0) {
+      return 0;
+    }
+    if (hex_color === "#ffffff") {
+      return 0xffffffff;
+    }
+    else if (hex_color[0] === "#") {
+      let r: number = parseInt(hex_color.slice(1, 3), 16);
+      let g: number = parseInt(hex_color.slice(3, 5), 16);
+      let b: number = parseInt(hex_color.slice(5, 7), 16);
+      return ((r << 16) | (g << 8) | b) >>> 0;
+    }
+    else {
+      let color_array = hex_color.split("(")[1].split(")")[0].split(",");
+      let r: number = parseInt(color_array[0]);
+      let g: number = parseInt(color_array[1]);
+      let b: number = parseInt(color_array[2]);
+      let a: number = Math.floor(255 * parseFloat(color_array[3]));
+      return ((a << 24) | (r << 16) | (g << 8) | b) >>> 0;
+    }
   }
 
   componentDidMount() {
@@ -173,6 +248,12 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
       messageType: 'sensor_msgs/CompressedImage'
     });
 
+    var chargerSub = new roslib.Topic({
+      ros: this.state.ros,
+      name: '/dodobot/charger',
+      messageType: 'sensor_msgs/BatteryState'
+    });
+
     var cmdVelPub = new roslib.Topic({
       ros: this.state.ros,
       name: '/dodobot/cmd_vel',
@@ -187,6 +268,34 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     });
     this.setState({tilterCmdPub});
 
+    var linearStepperPub = new roslib.Topic({
+      ros: this.state.ros,
+      name: '/dodobot/linear_cmd',
+      messageType: 'db_parsing/DodobotLinear'
+    });
+    this.setState({linearStepperPub});
+  
+    var dockService = new roslib.Service({
+      ros: this.state.ros,
+      name: '/dodobot/dock_request',
+      serviceType: 'std_srvs/Trigger'
+    });
+    this.setState({dockService});
+
+    var undockService = new roslib.Service({
+      ros: this.state.ros,
+      name: '/dodobot/undock_request',
+      serviceType: 'std_srvs/Trigger'
+    });
+    this.setState({undockService});
+    
+    var ringLightPub = new roslib.Topic({
+      ros: this.state.ros,
+      name: '/dodobot/ring_light_raw',
+      messageType: 'std_msgs/UInt32'
+    });
+    this.setState({ringLightPub});
+
     var robotStateService = new roslib.Service({
       ros: this.state.ros,
       name: '/dodobot/set_state',
@@ -198,6 +307,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
 
     batterySub.subscribe(this.batteryCallback);
     isChargingSub.subscribe(this.isChargingCallback);
+    chargerSub.subscribe(this.chargerCallback);
     bumperSub.subscribe(this.bumperCallback);
     driveSub.subscribe(this.driveCallback);
     fsrsSub.subscribe(this.fsrsCallback);
@@ -220,6 +330,15 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
   isChargingCallback(message: any) {
     this.setState({
       charging: message.data
+    });
+  }
+
+  chargerCallback(message: any) {
+    this.setState({
+      charger: {
+        voltage: message.voltage,
+        current: message.current,
+      }
     });
   }
 
@@ -330,23 +449,28 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
           z : 0.0
         }
       });
+      var should_publish_twist = false;
 
       switch (event.key) {
         case "w":
           twist.linear.x = this.state.linear_cmd;
           console.log("Driving at " + twist.linear.x + " m/s");
+          should_publish_twist = true;
           break;
         case "a":
           twist.angular.z = this.state.angular_cmd;
           console.log("Rotating at " + twist.angular.z + " rad/s");
+          should_publish_twist = true;
           break;
         case "s":
           twist.linear.x = -this.state.linear_cmd;
           console.log("Driving at " + twist.linear.x + " m/s");
+          should_publish_twist = true;
           break;
         case "d":
           twist.angular.z = -this.state.angular_cmd;
           console.log("Rotating at " + twist.angular.z + " rad/s");
+          should_publish_twist = true;
           break;
         case "t":
           console.log("Toggling camera tilter");
@@ -356,27 +480,35 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
         default:
           break;
       }
-      console.log(twist)
-      this.state.cmdVelPub.publish(twist);
+      if (should_publish_twist) {
+        this.state.cmdVelPub.publish(twist);
+      }
     }
     console.log('key down: ' + event.key);
   }
   handleKeyUp = (event: any) => {
     console.log('key up: ' + event.key);
     if (this.state.motors_enabled) {
-      console.log('Stopping motors');
-      var twist = new roslib.Message({
-        linear : {
-          x : 0.0,
-          y : 0.0,
-          z : 0.0
-        },
-        angular : {
-          x : 0.0,
-          y : 0.0,
-          z : 0.0
+      switch (event.key) {
+        case "w":
+        case "a":
+        case "s":
+        case "d":
+        case " ":
+          console.log('Stopping motors');
+          var twist = new roslib.Message({
+            linear : {
+              x : 0.0,
+              y : 0.0,
+              z : 0.0
+            },
+            angular : {
+              x : 0.0,
+              y : 0.0,
+              z : 0.0
+            }
+          });
         }
-      });
       this.state.cmdVelPub.publish(twist);
     }
   }
@@ -389,7 +521,38 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
       return <h2>Motors disabled</h2>;
     }
   }
-  
+
+  homeLinearStepper() {
+      var command = new roslib.Message({
+        command_type: 4,
+        max_speed: -1,
+        acceleration: -1
+      });
+      this.state.linearStepperPub.publish(command);
+  }
+
+  runDockRoutine()
+  {
+    console.log("Running dock routine");
+    var request = new roslib.ServiceRequest({});
+    this.state.dockService.callService(request, function (response: any) {        
+        console.log('Dock result: ' + response);
+    }, function(error: any){
+        console.error("Got an error while trying to call dock service: " + error);
+    });
+  }
+
+  runUnDockRoutine()
+  {
+    console.log("Running undock routine");
+    var request = new roslib.ServiceRequest({});
+    this.state.undockService.callService(request, function (response: any) {        
+        console.log('Undock result: ' + response);
+    }, function(error: any){
+        console.error("Got an error while trying to call undock service: " + error);
+    });
+  }
+
   render() {
     const battery = this.state.battery;
     const bumper = this.state.bumper;
@@ -398,6 +561,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     const image = this.state.image;
     const depth = this.state.depth;
     const is_charging = this.state.charging;
+    const charger = this.state.charger;
 
     return <div>
       <a href="http://192.168.0.21:8080/admin">Pi-Hole Admin Console</a>
@@ -429,6 +593,38 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
         </div>
         <hr/>
       </div> 
+
+      <div>
+        <h2>Routines</h2>
+        <button onClick={this.runDockRoutine}>
+          Dock
+        </button>
+        <button onClick={this.runUnDockRoutine}>
+          Undock
+        </button>
+      </div> 
+
+      <div>
+        <h2>Gripper controls</h2>
+        <button onClick={this.homeLinearStepper}>
+          Home linear
+        </button>
+      </div>
+
+      <div>
+        <h2>Ring Light</h2>
+        <Switch onChange={this.handleOnOffRingLight} checked={this.state.ring_light_on} />
+        <div style={{ height: 100 }}>
+          <ColorPicker
+            name='color'
+            label={this.state.ringLightColor}
+            onChange={this.handleChangeRingLight}
+          >
+            {this.state.ringLightColor}
+            </ColorPicker>
+        </div>
+      </div>
+
       <div  style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gridGap: 20 }}>
         <div hidden={!image}>
           <h2>Color Camera</h2>
@@ -449,6 +645,12 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
         <h2>Battery</h2>
         <p><b>Voltage:</b> {battery?.voltage.toFixed(2)} V</p>
         <p><b>Current:</b> {battery?.current.toFixed(2)} mA</p>
+        <hr/>
+      </div> 
+      <div hidden={!charger}>
+        <h2>Charger</h2>
+        <p><b>Voltage:</b> {charger?.voltage.toFixed(2)} V</p>
+        <p><b>Current:</b> {charger?.current.toFixed(2)} mA</p>
         <p><b>Is Charging:</b> {is_charging ? "Yes" : "No"}</p>
         <hr/>
       </div> 
