@@ -2,15 +2,24 @@
 import React from 'react';
 import Switch from "react-switch";
 import { TextBoxComponent } from '@syncfusion/ej2-react-inputs';
-import { CompressedImage, DodobotBatteryState, DodobotBumperState, DodobotDriveState, DodobotFSRsState, DodobotGripperState, DodobotLinearState } from './Sensors';
-import ColorPicker from 'material-ui-color-picker'
+import { DodobotState, CompressedImage, DodobotBatteryState, DodobotBumperState, DodobotDriveState, DodobotFSRsState, DodobotGripperState, DodobotLinearState } from './Sensors';
+import ColorPicker from 'material-ui-color-picker';
+import Button from '@material-ui/core/Button';
+import IconButton from '@material-ui/core/IconButton';
+import ArrowUpwardIcon from '@material-ui/icons/ArrowUpward';
+import ArrowDownwardIcon from '@material-ui/icons/ArrowDownward';
+import RotateLeftIcon from '@material-ui/icons/RotateLeft';
+import RotateRightIcon from '@material-ui/icons/RotateRight';
+import EjectIcon from '@material-ui/icons/Eject';
+import DockIcon from '@material-ui/icons/Dock';
+
 
 var roslib = require('roslib');
 
 // constants
 const WS_URL = 'ws://192.168.0.21:9090';
-const DEFAULT_LINEAR_VEL = 0.1;
-const DEFAULT_ANGULAR_VEL = 1.5;
+const DEFAULT_LINEAR_VEL = 0.5;
+const DEFAULT_ANGULAR_VEL = 1.0;
 
 interface SensorsProps {
 }
@@ -19,6 +28,7 @@ interface SensorsState {
   ros: any,
 
   // ros state
+  robot_state?: DodobotState
   battery?: DodobotBatteryState,
   charger?: DodobotBatteryState,
   bumper?: DodobotBumperState,
@@ -34,6 +44,8 @@ interface SensorsState {
   motors_enabled: boolean,
   ring_light_on: boolean,
   ringLightColor?: any,
+  button_motor_cmd_active: boolean,
+  active_switch_set: boolean,
 
   robotStateService?: any,
   cmdVelPub?: any,
@@ -57,6 +69,8 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
       colorTime: new Date().getTime(),
       depthTime: new Date().getTime(),
       motors_enabled: false,
+      button_motor_cmd_active: false,
+      active_switch_set: false,
       linear_cmd: DEFAULT_LINEAR_VEL,
       angular_cmd: DEFAULT_ANGULAR_VEL,
       ring_light_on: false,
@@ -64,6 +78,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     };
 
     // bind handlers
+    this.getStateCallback = this.getStateCallback.bind(this);
     this.batteryCallback = this.batteryCallback.bind(this);
     this.isChargingCallback = this.isChargingCallback.bind(this);
     this.bumperCallback = this.bumperCallback.bind(this);
@@ -116,13 +131,13 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     this.setState({ ring_light_on });
 
     if (ring_light_on && this.state.ringLightColor) {
-      var color = {data: this.colorToInt(this.state.ringLightColor)};
+      var ring_color = {data: this.colorToInt(this.state.ringLightColor)};
     }
     else {
-      var color = {data: 0};
+      var ring_color = {data: 0};
     }
-    var msg = new roslib.Message(color);
-    console.log("Setting ring light to " + JSON.stringify(color));
+    var msg = new roslib.Message(ring_color);
+    console.log("Setting ring light to " + JSON.stringify(ring_color));
     this.state.ringLightPub.publish(msg);
   }
 
@@ -173,6 +188,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     // document.addEventListener("click", this._handleDocumentClick, false);
     document.addEventListener("keydown", this.handleKeyDown);
     document.addEventListener("keyup", this.handleKeyUp);
+    document.addEventListener("mouseup", this.handleMouseUp);
   }
 
   componentWillUnmount() {
@@ -181,6 +197,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     // document.removeEventListener("click", this._handleDocumentClick, false);
     document.removeEventListener("keydown", this.handleKeyDown);
     document.removeEventListener("keyup", this.handleKeyUp);
+    document.addEventListener("mouseup", this.handleMouseUp);
   }
 
   initializeROS() {
@@ -198,6 +215,12 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
       ros: this.state.ros,
       name: '/dodobot/battery',
       messageType: 'sensor_msgs/BatteryState'
+    });
+
+    var getStateSub = new roslib.Topic({
+      ros: this.state.ros,
+      name: '/dodobot/state',
+      messageType: 'db_parsing/DodobotState'
     });
 
     var isChargingSub = new roslib.Topic({
@@ -304,7 +327,7 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
 
     this.setState({robotStateService});
 
-
+    getStateSub.subscribe(this.getStateCallback)
     batterySub.subscribe(this.batteryCallback);
     isChargingSub.subscribe(this.isChargingCallback);
     chargerSub.subscribe(this.chargerCallback);
@@ -318,6 +341,22 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
   }
 
   // ROS Callback Functions
+  getStateCallback(message: any) {
+    this.setState({
+      robot_state: {
+        battery_ok: message.battery_ok,
+        motors_active: message.motors_active,
+        loop_rate: message.loop_rate,
+        is_ready: message.is_ready,
+        robot_name: message.robot_name,
+      }
+    });
+
+    if (!this.state.active_switch_set && message.motors_active) {
+      this.setState({motors_enabled: message.motors_active});
+      this.setState({active_switch_set: true});
+    }
+  }
   batteryCallback(message: any) {
     this.setState({
       battery: {
@@ -486,6 +525,58 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     }
     console.log('key down: ' + event.key);
   }
+  handleMouseUp = (event: any) => {
+    console.log('mouse up: ' + JSON.stringify(event));
+    if (this.state.button_motor_cmd_active) {
+      var twist = new roslib.Message({
+        linear : {
+          x : 0.0,
+          y : 0.0,
+          z : 0.0
+        },
+        angular : {
+          x : 0.0,
+          y : 0.0,
+          z : 0.0
+        }
+      });
+      this.state.cmdVelPub.publish(twist);
+    }
+  }
+
+  handleDriveLinear = (linear_x: number) => {
+    this.setState({button_motor_cmd_active: true});
+    var twist = new roslib.Message({
+      linear : {
+        x : linear_x,
+        y : 0.0,
+        z : 0.0
+      },
+      angular : {
+        x : 0.0,
+        y : 0.0,
+        z : 0.0
+      }
+    });
+    this.state.cmdVelPub.publish(twist);
+  }
+  handleDriveAngular = (angular_z: number) => {
+    this.setState({button_motor_cmd_active: true});
+    var twist = new roslib.Message({
+      linear : {
+        x : 0.0,
+        y : 0.0,
+        z : 0.0
+      },
+      angular : {
+        x : 0.0,
+        y : 0.0,
+        z : angular_z
+      }
+    });
+    this.state.cmdVelPub.publish(twist);
+  }
+
   handleKeyUp = (event: any) => {
     console.log('key up: ' + event.key);
     if (this.state.motors_enabled) {
@@ -591,17 +682,45 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
           <p>D = rotate right</p>
           <p>T = toggle camera tilter</p>
         </div>
-        <hr/>
       </div> 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 2fr)", gridGap: 20, width: 250, height: 150 }}>
+        <div></div>
+        <IconButton aria-label="up" color="primary"> <ArrowUpwardIcon onMouseDown={() => { this.handleDriveLinear(this.state.linear_cmd) }} fontSize="large" /> </IconButton>
+        <div></div>
+        <IconButton aria-label="left" color="primary"> <RotateLeftIcon onMouseDown={() => { this.handleDriveAngular(this.state.angular_cmd) }} fontSize="large" /> </IconButton>
+        <IconButton aria-label="down" color="primary"> <ArrowDownwardIcon onMouseDown={() => { this.handleDriveLinear(-this.state.linear_cmd) }} fontSize="large" /> </IconButton>
+        <IconButton aria-label="right" color="primary"> <RotateRightIcon onMouseDown={() => { this.handleDriveAngular(-this.state.angular_cmd) }} fontSize="large" /> </IconButton>
+
+      </div>
+      <hr/>
 
       <div>
         <h2>Routines</h2>
-        <button onClick={this.runDockRoutine}>
+        <Button
+          variant="contained"
+          color="primary"
+          className="dock_button"
+          startIcon={<DockIcon />}
+          onClick={this.runDockRoutine}
+        >
+          Dock
+        </Button>
+        <Button
+          variant="contained"
+          color="primary"
+          className="undock_button"
+          startIcon={<EjectIcon />}
+          onClick={this.runUnDockRoutine}
+        >
+          Undock
+        </Button>
+        
+        {/* <button onClick={this.runDockRoutine}>
           Dock
         </button>
         <button onClick={this.runUnDockRoutine}>
           Undock
-        </button>
+        </button> */}
       </div> 
 
       <div>

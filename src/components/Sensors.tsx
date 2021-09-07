@@ -1,3 +1,11 @@
+
+export interface DodobotState {
+  battery_ok: boolean,
+  motors_active: boolean,
+  loop_rate: number,
+  is_ready: boolean,
+  robot_name: string,
+}
 export interface DodobotBatteryState {
   voltage: number,
   current: number
