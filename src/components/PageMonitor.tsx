@@ -12,6 +12,12 @@ import RotateLeftIcon from '@material-ui/icons/RotateLeft';
 import RotateRightIcon from '@material-ui/icons/RotateRight';
 import EjectIcon from '@material-ui/icons/Eject';
 import DockIcon from '@material-ui/icons/Dock';
+import HomeIcon from '@material-ui/icons/Home';
+import SendIcon from '@material-ui/icons/Send';
+import TextField from '@material-ui/core/TextField';
+import Menu from '@material-ui/core/Menu';
+import MenuItem from '@material-ui/core/MenuItem';
+import ArrowDropDownIcon from '@material-ui/icons/ArrowDropDown';
 
 
 var roslib = require('roslib');
@@ -19,7 +25,7 @@ var roslib = require('roslib');
 // constants
 const WS_URL = 'ws://192.168.0.21:9090';
 const DEFAULT_LINEAR_VEL = 0.5;
-const DEFAULT_ANGULAR_VEL = 1.0;
+const DEFAULT_ANGULAR_VEL = 1.5;
 
 interface SensorsProps {
 }
@@ -46,6 +52,7 @@ interface SensorsState {
   ringLightColor?: any,
   button_motor_cmd_active: boolean,
   active_switch_set: boolean,
+  keyboard_controls_enabled: boolean,
 
   robotStateService?: any,
   cmdVelPub?: any,
@@ -54,9 +61,16 @@ interface SensorsState {
   dockService?: any,
   undockService?: any,
   ringLightPub?: any,
+  saveRobotPoseService?: any,
+  parkRobotService?: any,
 
   linear_cmd: any,
   angular_cmd: any,
+
+  waypointName: string,
+  parkWaypointName: string,
+
+  waypointAnchorEl?: any,
 }
 
 export default class Sensors extends React.Component<SensorsProps,SensorsState> {
@@ -69,12 +83,15 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
       colorTime: new Date().getTime(),
       depthTime: new Date().getTime(),
       motors_enabled: false,
+      keyboard_controls_enabled: false,
       button_motor_cmd_active: false,
       active_switch_set: false,
       linear_cmd: DEFAULT_LINEAR_VEL,
       angular_cmd: DEFAULT_ANGULAR_VEL,
       ring_light_on: false,
-      ringLightColor: "#000000"
+      ringLightColor: "#000000",
+      waypointName: "",
+      parkWaypointName: "",
     };
 
     // bind handlers
@@ -91,15 +108,23 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     this.chargerCallback = this.chargerCallback.bind(this);
 
     this.handleChangeMotorState = this.handleChangeMotorState.bind(this);
+    this.handleControlsEnabledState = this.handleControlsEnabledState.bind(this);
     this.handleLinearVelChange = this.handleLinearVelChange.bind(this);
     this.handleAngularVelChange = this.handleAngularVelChange.bind(this);
     this.handleOnOffRingLight = this.handleOnOffRingLight.bind(this);
     this.handleChangeRingLight = this.handleChangeRingLight.bind(this);
     this.homeLinearStepper = this.homeLinearStepper.bind(this);
+
+    this.handleWaypointNameChange = this.handleWaypointNameChange.bind(this);
+    this.handleParkNameChange = this.handleParkNameChange.bind(this);
+
     this.runDockRoutine = this.runDockRoutine.bind(this);
     this.runUnDockRoutine = this.runUnDockRoutine.bind(this);
+    this.createWaypointHere = this.createWaypointHere.bind(this);
+    this.parkRobotHere = this.parkRobotHere.bind(this);
 
     this.MotorsEnabledSection = this.MotorsEnabledSection.bind(this);
+    this.ControlsEnabledSection = this.ControlsEnabledSection.bind(this);
   }
 
   handleLinearVelChange(event: any) {
@@ -123,6 +148,21 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     }, function(error: any){
         console.error("Got an error while trying to call set state service: " + error);
     });
+  }
+
+  handleControlsEnabledState(enabled: boolean) {
+    this.setState({ keyboard_controls_enabled: enabled });
+    console.log("Setting keyboard controls enabled to " + enabled);
+  }
+
+  handleWaypointNameChange(event: any) {
+    this.setState({waypointName: event.target.value});
+    this.setState({ keyboard_controls_enabled: false });
+  }
+
+  handleParkNameChange(event: any) {
+    this.setState({parkWaypointName: event.target.value});
+    this.setState({ keyboard_controls_enabled: false });
   }
 
 
@@ -327,6 +367,22 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
 
     this.setState({robotStateService});
 
+    var saveRobotPoseService = new roslib.Service({
+      ros: this.state.ros,
+      name: '/dodobot/db_waypoints/save_robot_pose',
+      serviceType: 'db_waypoints/SaveRobotPose'
+    });
+
+    this.setState({saveRobotPoseService});
+
+    var parkRobotService = new roslib.Service({
+      ros: this.state.ros,
+      name: '/dodobot/park_request',
+      serviceType: 'db_planning/NamedPose'
+    });
+
+    this.setState({parkRobotService});
+
     getStateSub.subscribe(this.getStateCallback)
     batterySub.subscribe(this.batteryCallback);
     isChargingSub.subscribe(this.isChargingCallback);
@@ -475,6 +531,9 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
 
 
   handleKeyDown = (event: any) => {
+    if (!this.state.keyboard_controls_enabled) {
+      return;
+    }
     if (this.state.motors_enabled) {
       var twist = new roslib.Message({
         linear : {
@@ -526,6 +585,9 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     console.log('key down: ' + event.key);
   }
   handleMouseUp = (event: any) => {
+    if (!this.state.keyboard_controls_enabled) {
+      return;
+    }
     console.log('mouse up: ' + JSON.stringify(event));
     if (this.state.button_motor_cmd_active) {
       var twist = new roslib.Message({
@@ -578,6 +640,9 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
   }
 
   handleKeyUp = (event: any) => {
+    if (!this.state.keyboard_controls_enabled) {
+      return;
+    }
     console.log('key up: ' + event.key);
     if (this.state.motors_enabled) {
       switch (event.key) {
@@ -613,6 +678,16 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
     }
   }
 
+  ControlsEnabledSection()
+  {
+    if (this.state.keyboard_controls_enabled) {
+      return <p><b>Controls enabled:</b></p>;
+    }
+    else {
+      return <p><b>Controls disabled:</b></p>;
+    }
+  }
+
   homeLinearStepper() {
       var command = new roslib.Message({
         command_type: 4,
@@ -641,6 +716,36 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
         console.log('Undock result: ' + response);
     }, function(error: any){
         console.error("Got an error while trying to call undock service: " + error);
+    });
+  }
+
+  createWaypointHere()
+  {
+    if (this.state.waypointName.length <= 0) {
+      console.log("Waypoint name must not be empty! " + this.state.waypointName);
+      return;
+    }
+    console.log("Create waypoint here");
+    var request = new roslib.ServiceRequest({name: this.state.waypointName});
+    this.state.saveRobotPoseService.callService(request, function (response: any) {        
+        console.log('Save robot pose result: ' + response);
+    }, function(error: any){
+        console.error("Got an error while trying to call save robot pose service: " + JSON.stringify(error));
+    });
+  }
+
+  parkRobotHere()
+  {
+    if (this.state.parkWaypointName.length <= 0) {
+      console.log("Waypoint name must not be empty! " + this.state.parkWaypointName);
+      return;
+    }
+    console.log("Park robot at " + this.state.parkWaypointName);
+    var request = new roslib.ServiceRequest({name: this.state.parkWaypointName});
+    this.state.parkRobotService.callService(request, function (response: any) {        
+        console.log('Park robot result: ' + response);
+    }, function(error: any){
+        console.error("Got an error while trying to call park robot service: " + JSON.stringify(error));
     });
   }
 
@@ -675,7 +780,8 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
           </div>
         </div>
         <div>
-          <p><b>Controls:</b></p>
+          <Switch onChange={this.handleControlsEnabledState} checked={this.state.keyboard_controls_enabled} />
+          <this.ControlsEnabledSection/>
           <p>W = drive forward</p>
           <p>A = rotate left</p>
           <p>S = drive backward</p>
@@ -696,52 +802,91 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
 
       <div>
         <h2>Routines</h2>
-        <Button
-          variant="contained"
-          color="primary"
-          className="dock_button"
-          startIcon={<DockIcon />}
-          onClick={this.runDockRoutine}
-        >
-          Dock
-        </Button>
-        <Button
-          variant="contained"
-          color="primary"
-          className="undock_button"
-          startIcon={<EjectIcon />}
-          onClick={this.runUnDockRoutine}
-        >
-          Undock
-        </Button>
-        
-        {/* <button onClick={this.runDockRoutine}>
-          Dock
-        </button>
-        <button onClick={this.runUnDockRoutine}>
-          Undock
-        </button> */}
-      </div> 
-
-      <div>
-        <h2>Gripper controls</h2>
-        <button onClick={this.homeLinearStepper}>
-          Home linear
-        </button>
-      </div>
-
-      <div>
-        <h2>Ring Light</h2>
-        <Switch onChange={this.handleOnOffRingLight} checked={this.state.ring_light_on} />
-        <div style={{ height: 100 }}>
-          <ColorPicker
-            name='color'
-            label={this.state.ringLightColor}
-            onChange={this.handleChangeRingLight}
+        <div>
+          <Button
+            style={{ margin: 5 }}
+            variant="contained"
+            color="primary"
+            className="dock_button"
+            startIcon={<DockIcon />}
+            onClick={this.runDockRoutine}
           >
-            {this.state.ringLightColor}
-            </ColorPicker>
-        </div>
+            Dock
+          </Button>
+          <Button
+            style={{ margin: 5 }}
+            variant="contained"
+            color="primary"
+            className="undock_button"
+            startIcon={<EjectIcon />}
+            onClick={this.runUnDockRoutine}
+          >
+            Undock
+          </Button>
+
+          <div style={{
+              padding: '2px 4px',
+              margin: 5,
+              display: 'flex',
+              alignItems: 'center',
+              width: 250,
+            }}>
+            <TextField
+              style={{
+                marginLeft: 5,
+                flex: 1,
+              }}
+              placeholder="Name location"
+              inputProps={{ 'aria-label': 'part at' }}
+              onChange={ this.handleWaypointNameChange }
+            />
+            <IconButton type="submit" aria-label="submit create waypoint" style={{
+                padding: 10,
+              }} onClick={this.createWaypointHere}>
+              <SendIcon />
+            </IconButton>
+          </div>
+          <div style={{
+              padding: '2px 4px',
+              margin: 5,
+              display: 'flex',
+              alignItems: 'center',
+              width: 250,
+            }}>
+            <TextField
+              style={{
+                marginLeft: 5,
+                flex: 1,
+              }}
+              placeholder="Park at"
+              inputProps={{ 'aria-label': 'part at' }}
+              onChange={ this.handleParkNameChange }
+            />
+            <IconButton type="submit" aria-label="list waypoints" style={{
+                padding: 10,
+              }} onClick={this.parkRobotHere}>
+              <ArrowDropDownIcon />
+            </IconButton>
+            <IconButton type="submit" aria-label="submit park at" style={{
+                padding: 10,
+              }} onClick={this.parkRobotHere}>
+              <SendIcon />
+            </IconButton>
+            
+            
+            {/* <Menu
+              id="simple-menu"
+              anchorEl={this.state.waypointAnchorEl}
+              keepMounted
+              open={Boolean(this.state.waypointAnchorEl)}
+              onClose={this.handleClose}
+            >
+              <MenuItem onClick={this.handleClose}>Profile</MenuItem>
+              <MenuItem onClick={this.handleClose}>My account</MenuItem>
+              <MenuItem onClick={this.handleClose}>Logout</MenuItem>
+            </Menu> */}
+          </div>
+        </div> 
       </div>
 
       <div  style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gridGap: 20 }}>
@@ -760,6 +905,34 @@ export default class Sensors extends React.Component<SensorsProps,SensorsState> 
           <img style={{width:"700"}} src={depth?.imageSrc}></img>
         </div>
       </div>
+
+      <div>
+        <h2>Gripper controls</h2>
+        <Button
+          variant="contained"
+          color="primary"
+          className="home_button"
+          startIcon={<HomeIcon />}
+          onClick={this.homeLinearStepper}
+        >
+          Home linear
+        </Button>
+      </div>
+
+      <div>
+        <h2>Ring Light</h2>
+        <Switch onChange={this.handleOnOffRingLight} checked={this.state.ring_light_on} />
+        <div style={{ height: 100 }}>
+          <ColorPicker
+            name='color'
+            label={this.state.ringLightColor}
+            onChange={this.handleChangeRingLight}
+          >
+            {this.state.ringLightColor}
+            </ColorPicker>
+        </div>
+      </div>
+
       <div hidden={!battery}>
         <h2>Battery</h2>
         <p><b>Voltage:</b> {battery?.voltage.toFixed(2)} V</p>
